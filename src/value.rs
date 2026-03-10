@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::fmt::Display;
 
 #[derive(PartialEq, Debug, Clone)]
@@ -16,9 +15,18 @@ pub enum Value {
     F64(f64),
     String(String),
     Array(Vec<usize>, Vec<usize>, Vec<Value>),
-    Object(String, HashMap<String, Value>),
+    Object(String, Vec<(String, Value)>),
     Reference(i32),
     Bottom,
+}
+
+impl Value {
+    pub fn get_member(&self, key: &str) -> Option<&Value> {
+        match self {
+            Value::Object(_, members) => members.iter().find(|(k, _)| k == key).map(|(_, v)| v),
+            _ => None,
+        }
+    }
 }
 
 fn fmt_indent(v: &Value, f: &mut std::fmt::Formatter<'_>, indent: usize) -> std::fmt::Result {

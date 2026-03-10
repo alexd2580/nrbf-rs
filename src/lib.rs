@@ -10,7 +10,7 @@ use std::io;
 use value::Value;
 
 mod debug;
-mod primitives;
+pub mod primitives;
 pub mod value;
 
 trait FromStream {
@@ -244,13 +244,13 @@ impl<'a, R: io::Read> DecoderState<'a, R> {
         let Class(class_name, fields) = self
             .classes
             .get(&class_id)
-            .expect(&format!("Class {class_id} is not yet defined"))
+            .unwrap_or_else(|| panic!("Class {class_id} is not yet defined"))
             .clone();
         let members = fields
             .iter()
             .map(|class_field| self.parse_class_member(class_field))
-            .collect::<HashMap<_, _>>();
-        Value::Object(class_name.clone(), members)
+            .collect::<Vec<_>>();
+        Value::Object(class_name, members)
     }
 
     fn next_value_record(&mut self) -> Value {
@@ -449,42 +449,42 @@ impl<'a, R: io::Read> DecoderState<'a, R> {
         }
     }
 
-    fn resolve_references(&mut self, v: Value) -> Value {
+    fn resolve_references(&mut self, v: &mut Value) {
         match v {
-            Value::Object(class, members) => Value::Object(
-                class,
-                members
-                    .into_iter()
-                    .map(|(k, v)| (k, self.resolve_references(v)))
-                    .collect(),
-            ),
-            Value::Array(a, b, values) => Value::Array(
-                a,
-                b,
-                values
-                    .into_iter()
-                    .map(|v| self.resolve_references(v))
-                    .collect(),
-            ),
-            Value::Reference(id) => loop {
-                if let Some(v) = self.values.get(&id) {
-                    return self.resolve_references(v.clone());
+            Value::Object(_, members) => {
+                for (_, member) in members.iter_mut() {
+                    self.resolve_references(member);
                 }
-                self.next_value_record();
-            },
-            other => other,
+            }
+            Value::Array(_, _, values) => {
+                for val in values.iter_mut() {
+                    self.resolve_references(val);
+                }
+            }
+            Value::Reference(id) => {
+                let id = *id;
+                while !self.values.contains_key(&id) {
+                    self.next_value_record();
+                }
+                let mut resolved = self.values.get(&id).unwrap().clone();
+                self.resolve_references(&mut resolved);
+                *v = resolved;
+            }
+            _ => {}
         }
     }
 }
 
 pub fn parse_nrbf<R: io::Read>(stream: &mut R) -> Value {
-    let mut decoder = DecoderState::new(stream);
+    let mut buffered = io::BufReader::new(stream);
+    let mut decoder = DecoderState::new(&mut buffered);
     while decoder.root_id.is_none() {
         decoder.next_value_record();
     }
 
     let root_id = decoder.root_id.unwrap();
-    let root = decoder.resolve_references(Value::Reference(root_id));
+    let mut root = Value::Reference(root_id);
+    decoder.resolve_references(&mut root);
     let end = decoder.next_value_record();
     assert_eq!(end, Value::Bottom);
 
